@@ -19,6 +19,7 @@ import com.squareup.okhttp.MediaType;
 import com.squareup.okhttp.RequestBody;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
+import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.LinkedHashSet;
 import java.util.Map;
@@ -291,19 +292,28 @@ final class RequestFactoryParser {
             com.squareup.okhttp.Headers headers = com.squareup.okhttp.Headers.of(
                 "Content-Disposition", "name=\"" + part.value() + "\"",
                 "Content-Transfer-Encoding", part.encoding());
-            Converter<?> converter;
-            if (methodParameterType == RequestBody.class) {
-              converter = new OkHttpRequestBodyConverter();
-            } else {
-              if (converterFactory == null) {
-                throw parameterError(i, "@Part parameter is %s"
-                    + " but no converter factory registered. Either add a converter factory"
-                    + " to the Retrofit instance or use RequestBody.",
-                    methodParameterType);
+
+            Class<?> rawType = Utils.getRawType(methodParameterType);
+            if (rawType.isArray()) {
+              Converter<?> converter =
+                  converterForParameter(converterFactory, i, rawType.getComponentType(),
+                      Part.class);
+              requestBuilderActions[i] = new RequestBuilderAction.PartArray<>(headers, converter);
+            } else if (Iterable.class.isAssignableFrom(rawType)) {
+              if (!(methodParameterType instanceof ParameterizedType)) {
+                throw parameterError(i,
+                    "@Part iterable type must be parameterized (e.g., List<Foo>)");
               }
-              converter = converterFactory.get(methodParameterType);
+              Converter<?> converter = converterForParameter(converterFactory, i,
+                  Utils.getSingleParameterUpperBound((ParameterizedType) methodParameterType),
+                  Part.class);
+              requestBuilderActions[i] =
+                  new RequestBuilderAction.PartIterable<>(headers, converter);
+            } else {
+              Converter<?> converter =
+                  converterForParameter(converterFactory, i, methodParameterType, Part.class);
+              requestBuilderActions[i] = new RequestBuilderAction.Part<>(headers, converter);
             }
-            requestBuilderActions[i] = new RequestBuilderAction.Part<>(headers, converter);
             gotPart = true;
 
           } else if (methodParameterAnnotation instanceof PartMap) {
@@ -328,18 +338,8 @@ final class RequestFactoryParser {
               throw parameterError(i, "Multiple @Body method annotations found.");
             }
 
-            Converter<?> converter;
-            if (methodParameterType == RequestBody.class) {
-              converter = new OkHttpRequestBodyConverter();
-            } else {
-              if (converterFactory == null) {
-                throw parameterError(i, "@Body parameter is %s"
-                        + " but no converter factory registered. Either add a converter factory"
-                        + " to the Retrofit instance or use RequestBody.",
-                    methodParameterType);
-              }
-              converter = converterFactory.get(methodParameterType);
-            }
+            Converter<?> converter =
+                converterForParameter(converterFactory, i, methodParameterType, Body.class);
 
             requestBuilderActions[i] = new RequestBuilderAction.Body<>(converter);
             gotBody = true;
@@ -366,6 +366,23 @@ final class RequestFactoryParser {
     }
 
     this.requestBuilderActions = requestBuilderActions;
+  }
+
+  private Converter<?> converterForParameter(Converter.Factory converterFactory, int index,
+      Type methodParameterType, Class<? extends Annotation> annotation) {
+    Converter<?> converter;
+    if (methodParameterType == RequestBody.class) {
+      converter = new OkHttpRequestBodyConverter();
+    } else {
+      if (converterFactory == null) {
+        throw parameterError(index, "@%s parameter is %s"
+                + " but no converter factory registered. Either add a converter factory"
+                + " to the Retrofit instance or use RequestBody.", annotation.getSimpleName(),
+            methodParameterType);
+      }
+      converter = converterFactory.get(methodParameterType);
+    }
+    return converter;
   }
 
   private void validatePathName(int index, String name) {

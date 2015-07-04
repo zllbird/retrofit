@@ -204,6 +204,50 @@ abstract class RequestBuilderAction {
     }
   }
 
+  static final class PartArray<T> extends RequestBuilderAction {
+    private final Headers headers;
+    private final Converter<T> converter;
+
+    PartArray(Headers headers, Converter<T> converter) {
+      this.headers = headers;
+      this.converter = converter;
+    }
+
+    @Override void perform(RequestBuilder builder, Object value) {
+      if (value == null) return; // Skip null values.
+
+      //noinspection unchecked
+      T[] arrayValues = (T[]) value;
+      for (T arrayValue : arrayValues) {
+        if (arrayValue != null) { // Skip null values.
+          builder.addPart(headers, converter.toBody(arrayValue));
+        }
+      }
+    }
+  }
+
+  static final class PartIterable<T> extends RequestBuilderAction {
+    private final Headers headers;
+    private final Converter<T> converter;
+
+    PartIterable(Headers headers, Converter<T> converter) {
+      this.headers = headers;
+      this.converter = converter;
+    }
+
+    @Override void perform(RequestBuilder builder, Object value) {
+      if (value == null) return; // Skip null values.
+
+      //noinspection unchecked
+      Iterable<T> iterable = (Iterable<T>) value;
+      for (T item : iterable) {
+        if (item != null) { // Skip null values.
+          builder.addPart(headers, converter.toBody(item));
+        }
+      }
+    }
+  }
+
   static final class PartMap extends RequestBuilderAction {
     private final Converter.Factory converterFactory;
     private final String transferEncoding;
